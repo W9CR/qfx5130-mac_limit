@@ -15,28 +15,35 @@ When a violation is found the script will log this to the logger and shutdown th
 # Config
 
 - On the qfx config add this:
+```junos
 	set system scripts language python3
 	set event-options generate-event SixtySeconds time-interval 60
 	set event-options policy MAC-LIMIT events SixtySeconds
 	set event-options policy MAC-LIMIT then event-script mac_limit_guard.py
 	# adjust this to be an admin user 
 	set event-options event-script file mac_limit_guard.py python-script-user bryan
+```
 
 - SCP the file to the qfx /var/db/scripts/event/ directory.
+```
 	# ls /var/db/scripts/event/mac_limit_guard.py -al
 	-rwxr-xr-x. 1 root root 13029 Mar  7 19:24 /var/db/scripts/event/mac_limit_guard.py
+```
 
 - Edit the /var/db/scripts/event/mac_limit_guard.py on the qfx and adjust the DEFAULTS
 
 - monitor and test that this is running from junos
+```junos
 	bryan@QFX7> monitor start messages | match mac_limit_guard
 	Mar  7 20:36:43  QFX7 cscript[1991]: CSCRIPT_SECURITY_WARNING: unsigned python script '/var/db/scripts/event/mac_limit_guard.py' without checksum is executed
 	Mar  7 20:36:43  QFX7 mac_limit_guard[2002]: Starting scheduler loop: run_count=4, interval=15s
     Mar  7 20:37:28  QFX7 mac_limit_guard[5996]: Scheduler loop completed
+```
 
 - trace command for cscript
+```junos
 	show trace application cscript time 1
-
+```
 # Improvements
 - Find some way to key this off a syslog event of learning a new MAC address.  Classic Junos can do this, but the 5130 is Junos (d)Evolved, and boy they really laid an egg with this.  So much basic stuff is missing.  There is 'show ethernet-switching mac-learning-log' but that's not something we can action items off of for syslog.  If this could be used, well it would solve all the crap of polling.   
 
