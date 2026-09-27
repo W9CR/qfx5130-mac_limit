@@ -30,7 +30,7 @@ When a violation is found the script will log this to the logger and shutdown th
 	-rwxr-xr-x. 1 root root 13029 Mar  7 19:24 /var/db/scripts/event/mac_limit_guard.py
 ```
 
-- Edit the /var/db/scripts/event/mac_limit_guard.py on the qfx and adjust the DEFAULTS
+- Edit the /var/db/scripts/mac_limit_guard.conf on the qfx and adjust the DEFAULTS
 
 - monitor and test that this is running from junos
 ```junos
