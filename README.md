@@ -8,9 +8,61 @@ The script is designed to be run from the router as an event every minute.  This
 
 In testing it was found the mac table can be polled every second without much issue, and the switch is able to learn about 2k mac's per second.  By default this runs 4 times in the loop per minute, meaning the most number of macs which would be learned if a port floods random macs is about 30k.  This was thought to be a good trade off in terms of polling vs. cpu time.   Running it every minute means that if it crashes, it will be restart fast, and doesn't need to be kicked when changes are made to the script; changes will be picked up every 60s.   
 
-You can limit interfaces in several ways, but they need to be listed.  The entire interface (IFD) or unit/subinterface (IFLS) can be addressed.  Regexs are supported to match mutiple interfaces.  There is a default limit of MACs wich can be set, and each interface can be set individually.  Note that if you set the interface MAC number you must enable the interface in INCLUDE_*_EXACT stanza too. 
+You can limit interfaces in several ways, but they need to be listed.  The entire interface (IFD) or unit/subinterface (IFL) can be addressed.  Regexs are supported to match multiple interfaces.  There are four tables in the config file (PER_IFL_LIMIT_EXACT, PER_IFL_LIMIT_REGEX, PER_IFD_LIMIT_EXACT, PER_IFD_LIMIT_REGEX) and enforcement is opt-in: an interface not named in one of them is NOT enforced.  `DEFAULT_MAC_LIMIT` is dead code - see the header of `mac_limit_guard.conf`.  Precedence is exact IFL, then IFL regex, then exact IFD, then IFD regex.
 
-When a violation is found the script will log this to the logger and shutdown the interface or subinterface. 
+When a violation is found the script will log this to the logger and shutdown the interface or subinterface.
+
+## What counts as a MAC
+
+**Only DYNAMICALLY LEARNED MACs are counted.**  A MAC is counted only when its
+table entry carries the `D` flag.  Static entries are ignored, and there are
+three ways an entry ends up static, none of which the limit will ever see:
+
+- **Configured `static-mac`.**  A MAC pinned on a VLAN by config - for example
+  the ones TampaCoOp pins on `ae3.420` - shows as `S,SE` and is invisible to the
+  limit.  A limit of 10 on that unit counts zero until the customer sources
+  MACs dynamically.
+- **Sticky / persistent learning.**  A MAC learned once and then made
+  persistent is no longer dynamic, so it stops counting the moment it sticks.
+- **EVPN remote entries.**  MACs learned from another PE (`DR`, `DRP`) are not
+  counted either; the script matches on `D` alone, and a remote entry's `D` is
+  qualified by the `R`.
+
+The consequence is that the limit bounds what a customer can **flood** with, not
+what the segment holds.  A port carrying only static and sticky MACs can never
+trip its limit, however many of them there are.  This is deliberate - the guard
+exists to stop a MAC flood, and static entries are ones we put there ourselves -
+but it means a limit is not a count of "MACs allowed on this port", and reading
+it that way will mislead you.
+
+## What can be enforced
+
+`ENFORCE_IFD_REGEX` in the script is a hard-coded safety control, not policy.
+It accepts physical ports (`et-`, `xe-`, `ge-` in `FPC/PIC/PORT` form) and AE
+bundles (`aeN`).  Anything else - `irb`, `lo0`, `vtep`, `esi`, and malformed
+names - is refused.
+
+An AE is accepted because a bundle is a real customer-facing interface and its
+logical units carry limits exactly as a port's do (`ae3.420` is the TampaCoOp
+handoff).  Note this regex guards **two** places: the policy validation, and the
+MAC-table walk that decides which entries are countable.  A type missing from it
+therefore fails twice over - the config is rejected outright, and even if it were
+accepted its MACs would never be counted.
+
+That first failure is not scoped to the offending entry.  `enforce_once` fails
+safe on any config error by abandoning the **entire** policy for that pass, so
+one unrecognised interface name silently disables enforcement for every other
+interface and every other customer on the box.  The symptom is a log line every
+60 seconds:
+
+```
+Unable to start: CONFIGURATION INVALID: PER_IFL_LIMIT_EXACT: unsupported interface 'ae3';
+FAIL-SAFE: no enforcement performed
+```
+
+This is exactly what happened on QFX27 and QFX30 on 2026-10-08, when `ae3.420`
+was added before `ae` was accepted here.  If you add a limit and enforcement
+elsewhere seems to stop, check for this line first.
 
 # Config
 

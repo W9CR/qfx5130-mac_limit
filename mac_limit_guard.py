@@ -25,7 +25,20 @@ LOG_TAG = "mac_limit_guard"
 COMMIT_COMMENT = "Auto-disable logical interfaces: MAC limit exceeded"
 
 # These remain hard-coded safety controls rather than policy.
-ENFORCE_IFD_REGEX = re.compile(r"^(et-|xe-|ge-)\d+/\d+/\d+$")
+#
+# The interface types the guard is willing to act on: physical ports
+# (et-/xe-/ge-) and AE bundles (aeN). An AE is a real customer-facing
+# interface - ae3 is the TampaCoOp handoff - and its logical units carry MAC
+# limits exactly as a port's do, so it has to be accepted here. Everything
+# else (irb, lo0, vtep, esi, ...) is refused rather than guessed at.
+#
+# Both the policy validation and the MAC-table walk use this, so a type
+# missing from it is invisible twice over: the config is rejected outright,
+# and even if it were accepted its MACs would never be counted.
+ENFORCE_IFD_REGEX = re.compile(
+    r"^(?:et-|xe-|ge-)\d+/\d+/\d+$"
+    r"|^ae\d+$"
+)
 IGNORE_IFDS = {"irb", "vtep", "lo0"}
 
 
@@ -165,7 +178,7 @@ def validate_ifd(ifd: str, description: str) -> None:
 
     if not ENFORCE_IFD_REGEX.fullmatch(ifd):
         raise ValueError(
-            f"{description}: invalid physical interface '{ifd}'"
+            f"{description}: unsupported interface '{ifd}'"
         )
 
 
@@ -768,6 +781,28 @@ def count_dynamic_macs_per_ifl(
     entries: List[dict],
     config: Dict[str, Any]
 ) -> Dict[str, int]:
+    """
+    Count the MACs on each enforced IFL.
+
+    ONLY DYNAMICALLY LEARNED MACs ARE COUNTED. An entry is counted only when
+    its flags carry "D"; static entries are ignored. Three things therefore
+    never count:
+
+      - a configured `static-mac` (flags "S"), which is how a customer's
+        pinned MACs appear
+      - a sticky/persistent MAC once it has stuck
+      - an EVPN remote entry ("DR"/"DRP"), whose D is qualified by the R
+
+    So a limit bounds what a customer can FLOOD with, not what the segment
+    holds. A port carrying only static and sticky MACs can never trip its
+    limit, however many of them there are. That is deliberate - the guard
+    exists to stop a MAC flood, and static entries are ones we put there
+    ourselves - but a limit must not be read as "MACs allowed on this port".
+
+    An entry whose IFD is not matched by ENFORCE_IFD_REGEX is skipped, so an
+    interface type missing from that regex is uncountable even if the policy
+    naming it was accepted. See the note on that regex.
+    """
 
     counts: Dict[str, int] = {}
 
